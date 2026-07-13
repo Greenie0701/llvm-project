@@ -16529,6 +16529,59 @@ static SDValue tryLowerToBSL(SDValue N, SelectionDAG &DAG) {
                            N0->getOperand(1 - i), N1->getOperand(1 - j));
     }
 
+  // Fold: or(and(xor(setcc(and(X,Mask), Mask, eq), -1), A), and(setcc(and(X,Mask), Mask, eq), B))
+  // --> BSP(setcc(and(X,Mask), 0, ne), A, B)
+  // (X & Mask) == Mask, for a power-of-2 Mask, is equivalent to (X & Mask) != 0.
+  // The latter lowers to CMTST (one instruction) instead of AND+CMEQ (two instructions).
+  for (int i = 1; i >= 0; --i)
+    for (int j = 1; j >= 0; --j) {
+      SDValue NotMask = N0->getOperand(i);
+      SDValue A = N0->getOperand(1 - i);
+      SDValue Mask = N1->getOperand(j);
+      SDValue B = N1->getOperand(1 - j);
+
+      if (NotMask.getOpcode() != ISD::XOR ||
+          !ISD::isBuildVectorAllOnes(NotMask.getOperand(1).getNode()))
+        continue;
+      if (Mask != NotMask.getOperand(0))
+        continue;
+      if (Mask.getOpcode() != ISD::SETCC)
+        continue;
+
+      ISD::CondCode CC = cast<CondCodeSDNode>(Mask.getOperand(2))->get();
+      if (CC != ISD::SETEQ && CC != ISD::SETNE)
+        continue;
+
+      SDValue InnerAND = Mask.getOperand(0);
+      SDValue CmpRHS = Mask.getOperand(1);
+
+      if (InnerAND.getOpcode() != ISD::AND)
+        continue;
+
+      APInt SplatVal;
+      bool Op0IsPow2 = ISD::isConstantSplatVector(
+                           InnerAND.getOperand(0).getNode(), SplatVal) &&
+                       SplatVal.isPowerOf2();
+      bool Op1IsPow2 = !Op0IsPow2 &&
+                       ISD::isConstantSplatVector(
+                           InnerAND.getOperand(1).getNode(), SplatVal) &&
+                       SplatVal.isPowerOf2();
+      if (!Op0IsPow2 && !Op1IsPow2)
+        continue;
+
+      bool RHSIsZero = ISD::isBuildVectorAllZeros(CmpRHS.getNode());
+      APInt RHSSplat;
+      bool RHSIsMask = !RHSIsZero &&
+                       ISD::isConstantSplatVector(CmpRHS.getNode(), RHSSplat) &&
+                       RHSSplat == SplatVal;
+      if (!RHSIsZero && !RHSIsMask)
+        continue;
+
+      SDValue Zero = DAG.getConstant(0, DL, CmpRHS.getValueType());
+      SDValue NewMask =
+          DAG.getSetCC(DL, Mask.getValueType(), InnerAND, Zero, ISD::SETNE);
+      return DAG.getNode(AArch64ISD::BSP, DL, VT, NewMask, A, B);
+    }
   return SDValue();
 }
 
