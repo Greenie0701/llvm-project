@@ -16529,10 +16529,12 @@ static SDValue tryLowerToBSL(SDValue N, SelectionDAG &DAG) {
                            N0->getOperand(1 - i), N1->getOperand(1 - j));
     }
 
-  // Fold: or(and(xor(setcc(and(X,Mask), Mask, eq), -1), A), and(setcc(and(X,Mask), Mask, eq), B))
+  // Fold: or(and(xor(setcc(and(X,Mask), Mask, eq), -1), A),
+  // and(setcc(and(X,Mask), Mask, eq), B))
   // --> BSP(setcc(and(X,Mask), 0, ne), A, B)
-  // (X & Mask) == Mask, for a power-of-2 Mask, is equivalent to (X & Mask) != 0.
-  // The latter lowers to CMTST (one instruction) instead of AND+CMEQ (two instructions).
+  // (X & Mask) == Mask, for a power-of-2 Mask, is equivalent to (X & Mask) !=
+  // 0. The latter lowers to CMTST (one instruction) instead of AND+CMEQ (two
+  // instructions).
   for (int i = 1; i >= 0; --i)
     for (int j = 1; j >= 0; --j) {
       SDValue NotMask = N0->getOperand(i);
